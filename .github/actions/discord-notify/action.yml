@@ -1,0 +1,43 @@
+name: Discord notification
+description: Posts a message to a Discord channel through a webhook. A failed delivery is a warning, not a failed job.
+
+inputs:
+  webhook_url:
+    description: The channel's webhook URL. Pass it from a secret. Empty means do nothing.
+    default: ""
+  title:
+    description: The message title.
+    required: true
+  description:
+    description: The message text. Markdown works.
+    default: ""
+  url:
+    description: Where the title links to.
+    default: ""
+  color:
+    description: The stripe colour as a decimal number, for example 3447003 for blue.
+    default: "5793266"
+  fields:
+    description: Extra details, one per line as "Name: value".
+    default: ""
+  footer:
+    description: Small text at the bottom.
+    default: ""
+  fail_on_error:
+    description: Fail the job when the message can't be sent.
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook_url }}
+        TITLE: ${{ inputs.title }}
+        DESCRIPTION: ${{ inputs.description }}
+        URL: ${{ inputs.url }}
+        COLOR: ${{ inputs.color }}
+        FIELDS: ${{ inputs.fields }}
+        FOOTER: ${{ inputs.footer }}
+        FAIL_ON_ERROR: ${{ inputs.fail_on_error }}
+      run: python3 "$GITHUB_ACTION_PATH/notify.py"

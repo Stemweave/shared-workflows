@@ -1,0 +1,109 @@
+name: Discord release notification
+
+# Posts to Discord when a module gets a new version. Call it from a workflow_run workflow that
+# follows "Semantic versioning", and pass it the commit that workflow ran for. It looks up the release
+# made for that commit and stays quiet when there is none.
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: The commit the release was made from.
+        type: string
+        required: true
+      tag_prefix:
+        description: Prefix of version tags.
+        type: string
+        default: v
+      runs_on:
+        description: Runner label. The runner needs Python 3.9 or later and the gh CLI.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        description: The webhook of the channel to post to. Empty means nothing is sent.
+        required: false
+
+permissions: {}
+
+jobs:
+  notify:
+    name: notify
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ inputs.commit_sha }}
+          PREFIX: ${{ inputs.tag_prefix }}
+        run: |
+          set -euo pipefail
+
+          prefix_re=$(printf '%s' "$PREFIX" | sed 's#[][\.*^$+?(){}|/]#\\&#g')
+          pattern="^${prefix_re}[0-9]+\.[0-9]+\.[0-9]+$"
+
+          all=$(gh api --paginate "repos/$REPO/tags" --jq '.[] | [.name, .commit.sha] | @tsv')
+          stable=$(printf '%s\n' "$all" | cut -f1 | grep -E "$pattern" | sort -V || true)
+          tag=$(printf '%s\n' "$all" | awk -F'\t' -v sha="$SHA" '$2 == sha { print $1 }' | grep -E "$pattern" | sort -V | tail -n 1 || true)
+
+          if [ -z "$tag" ]; then
+            echo "No release was made for ${SHA:0:7}, so there is nothing to announce."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          previous=$(printf '%s\n' "$stable" | grep -x -B1 -- "$tag" | head -n 1 || true)
+          [ "$previous" = "$tag" ] && previous=""
+
+          numbers() { local v="${1#"$PREFIX"}"; local a b c; IFS=. read -r a b c <<< "$v"; echo "$a $b $c"; }
+          if [ -z "$previous" ]; then
+            bump=initial
+            version_text="$tag"
+          else
+            read -r pa pb _ <<< "$(numbers "$previous")"
+            read -r na nb _ <<< "$(numbers "$tag")"
+            if [ "$na" != "$pa" ]; then bump=major; elif [ "$nb" != "$pb" ]; then bump=minor; else bump=patch; fi
+            version_text="$previous -> $tag"
+          fi
+
+          case "$bump" in
+            initial) headline="First release, $tag."; color=15844367 ;;
+            major)   headline="Upgrade from $previous to $tag. This is a **major** release, so read the notes before upgrading."; color=15158332 ;;
+            minor)   headline="Upgrade from $previous to $tag. New features."; color=3066993 ;;
+            patch)   headline="Upgrade from $previous to $tag. Fixes."; color=3447003 ;;
+          esac
+
+          url=$(gh release view "$tag" --repo "$REPO" --json url --jq .url)
+          notes=$(gh release view "$tag" --repo "$REPO" --json body --jq .body | head -c 1500 || true)
+          description="$headline"$'\n\n'"Pin it with \`?ref=$tag\`."
+          if [ -n "$notes" ]; then description+=$'\n\n'"$notes"; fi
+
+          delimiter="description_$(date +%s%N)"
+          {
+            echo "found=true"
+            echo "tag=$tag"
+            echo "bump=$bump"
+            echo "color=$color"
+            echo "url=$url"
+            echo "version_text=$version_text"
+            echo "description<<$delimiter"
+            printf '%s\n' "$description"
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.release.outputs.found == 'true'
+        uses: Stemweave/shared-workflows/.github/actions/discord-notify@main
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: ${{ github.repository }} ${{ steps.release.outputs.tag }} released
+          description: ${{ steps.release.outputs.description }}
+          url: ${{ steps.release.outputs.url }}
+          color: ${{ steps.release.outputs.color }}
+          fields: |
+            Module: ${{ github.repository }}
+            Version: ${{ steps.release.outputs.version_text }}
+            Change: ${{ steps.release.outputs.bump }}
+          footer: ${{ github.repository }}

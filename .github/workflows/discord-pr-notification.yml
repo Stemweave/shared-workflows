@@ -1,0 +1,79 @@
+name: Discord PR notification
+
+# Posts to Discord when a pull request is opened, reopened, marked ready for review, merged, or
+# closed without merging. Call it from a pull_request workflow. Drafts stay quiet until ready.
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: Runner label. The runner needs Python 3.9 or later.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        description: The webhook of the channel to post to. Empty means nothing is sent.
+        required: false
+
+permissions: {}
+
+jobs:
+  notify:
+    name: notify
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - id: message
+        env:
+          ACTION: ${{ github.event.action }}
+          MERGED: ${{ github.event.pull_request.merged }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          skip=false
+          label=""
+          color=3447003
+          case "$ACTION" in
+            opened)
+              label="Opened"
+              [ "$DRAFT" = "true" ] && skip=true
+              ;;
+            reopened)
+              label="Reopened"
+              ;;
+            ready_for_review)
+              label="Ready for review"
+              color=16766720
+              ;;
+            closed)
+              if [ "$MERGED" = "true" ]; then
+                label="Merged"
+                color=10181046
+              else
+                label="Closed without merging"
+                color=9807270
+              fi
+              ;;
+            *)
+              skip=true
+              ;;
+          esac
+          {
+            echo "skip=$skip"
+            echo "label=$label"
+            echo "color=$color"
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.message.outputs.skip != 'true'
+        uses: Stemweave/shared-workflows/.github/actions/discord-notify@main
+        with:
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          title: "#${{ github.event.pull_request.number }} ${{ github.event.pull_request.title }}"
+          description: "**${{ steps.message.outputs.label }}** by ${{ github.event.sender.login }}"
+          url: ${{ github.event.pull_request.html_url }}
+          color: ${{ steps.message.outputs.color }}
+          fields: |
+            Author: ${{ github.event.pull_request.user.login }}
+            Branch: ${{ github.event.pull_request.head.ref }} -> ${{ github.event.pull_request.base.ref }}
+            Changes: +${{ github.event.pull_request.additions }} -${{ github.event.pull_request.deletions }} in ${{ github.event.pull_request.changed_files }} files
+          footer: ${{ github.repository }}
