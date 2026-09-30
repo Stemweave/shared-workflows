@@ -1,0 +1,29 @@
+name: versioning
+
+# This repository versions itself with its own workflows. Releases also move the v1 tag that
+# every caller pins.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  pr-description:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/semantic-version-pr-check.yml
+
+  release:
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: ./.github/workflows/semantic-version-release.yml
+    with:
+      update_major_tag: true

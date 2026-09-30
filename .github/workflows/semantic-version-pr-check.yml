@@ -1,0 +1,57 @@
+name: Semantic version PR check
+
+# Fails a pull request whose description doesn't follow the standard template or doesn't pick a
+# version bump. Call it from a pull_request workflow. See the README for the caller.
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: Runner label. The runner needs Python 3.9 or later.
+        type: string
+        default: ubuntu-latest
+      require_standards:
+        type: boolean
+        default: true
+      require_migration_for_major:
+        type: boolean
+        default: true
+      min_section_chars:
+        type: number
+        default: 20
+      exempt_authors:
+        description: Comma-separated authors that skip the template, such as dependency bots.
+        type: string
+        default: dependabot[bot],renovate[bot]
+      exempt_bump:
+        description: The bump exempt authors get. One of major, minor, patch, none.
+        type: string
+        default: none
+    outputs:
+      bump:
+        description: The version bump the pull request asks for.
+        value: ${{ jobs.validate.outputs.bump }}
+
+permissions: {}
+
+jobs:
+  validate:
+    name: validate
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      bump: ${{ steps.semver.outputs.bump }}
+    steps:
+      - id: semver
+        uses: Stemweave/shared-workflows/.github/actions/pr-semver@v1
+        with:
+          mode: check
+          pull_request_number: ${{ github.event.pull_request.number }}
+          require_standards: ${{ inputs.require_standards }}
+          require_migration_for_major: ${{ inputs.require_migration_for_major }}
+          min_section_chars: ${{ inputs.min_section_chars }}
+          exempt_authors: ${{ inputs.exempt_authors }}
+          exempt_bump: ${{ inputs.exempt_bump }}

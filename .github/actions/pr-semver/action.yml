@@ -1,0 +1,92 @@
+name: Semantic version from the pull request
+description: Checks a pull request description against the standard template, or works out and publishes the next release from the merged pull requests.
+
+inputs:
+  mode:
+    description: check validates a pull request description. release publishes the next version.
+    required: true
+  token:
+    description: Token for the GitHub API. release needs contents write and pull-requests read.
+    default: ${{ github.token }}
+  pull_request_number:
+    description: The pull request to check. Used by check.
+    default: ""
+  commit_sha:
+    description: The commit that was merged. Used by release.
+    default: ""
+  default_branch:
+    description: The branch releases are made from. Used by release.
+    default: ""
+  require_standards:
+    description: Require every item in the Standards checklist to be ticked.
+    default: "true"
+  require_migration_for_major:
+    description: Require the Breaking changes and migration section for a Major bump.
+    default: "true"
+  min_section_chars:
+    description: Fewest characters a What, Why, or testing section needs.
+    default: "20"
+  exempt_authors:
+    description: Comma-separated pull request authors that skip the template, such as dependency bots.
+    default: dependabot[bot],renovate[bot]
+  exempt_bump:
+    description: The bump those authors' pull requests get. One of major, minor, patch, none.
+    default: none
+  tag_prefix:
+    description: Prefix of version tags.
+    default: v
+  initial_version:
+    description: The version a first release is bumped from when the repository has no version tags.
+    default: 0.0.0
+  update_major_tag:
+    description: Also move the floating major tag, such as v1, to each release. For repositories others pin with @v1.
+    default: "false"
+  on_missing_pr:
+    description: What to do when the merged commit has no pull request. skip or fail.
+    default: skip
+  dry_run:
+    description: Work out the release and report it without creating anything.
+    default: "false"
+
+outputs:
+  valid:
+    description: check. Whether the description is valid.
+    value: ${{ steps.run.outputs.valid }}
+  bump:
+    description: The version bump, one of major, minor, patch, none.
+    value: ${{ steps.run.outputs.bump }}
+  released:
+    description: release. true when a release was created.
+    value: ${{ steps.run.outputs.released }}
+  version:
+    description: release. The new version without the prefix, such as 1.4.0.
+    value: ${{ steps.run.outputs.version }}
+  tag:
+    description: release. The new tag, such as v1.4.0.
+    value: ${{ steps.run.outputs.tag }}
+  previous_tag:
+    description: release. The tag the new version follows, empty for a first release.
+    value: ${{ steps.run.outputs.previous_tag }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        PR_NUMBER: ${{ inputs.pull_request_number }}
+        COMMIT_SHA: ${{ inputs.commit_sha }}
+        DEFAULT_BRANCH: ${{ inputs.default_branch }}
+        REQUIRE_STANDARDS: ${{ inputs.require_standards }}
+        REQUIRE_MIGRATION_FOR_MAJOR: ${{ inputs.require_migration_for_major }}
+        MIN_SECTION_CHARS: ${{ inputs.min_section_chars }}
+        EXEMPT_AUTHORS: ${{ inputs.exempt_authors }}
+        EXEMPT_BUMP: ${{ inputs.exempt_bump }}
+        TAG_PREFIX: ${{ inputs.tag_prefix }}
+        INITIAL_VERSION: ${{ inputs.initial_version }}
+        UPDATE_MAJOR_TAG: ${{ inputs.update_major_tag }}
+        ON_MISSING_PR: ${{ inputs.on_missing_pr }}
+        DRY_RUN: ${{ inputs.dry_run }}
+        MODE: ${{ inputs.mode }}
+      run: python3 "$GITHUB_ACTION_PATH/main.py" "$MODE"

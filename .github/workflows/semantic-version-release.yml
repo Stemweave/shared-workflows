@@ -1,0 +1,98 @@
+name: Semantic version release
+
+# Tags and publishes the next release when pull requests merge, using the version bump ticked in
+# each pull request description. Call it from a push workflow on the default branch.
+on:
+  workflow_call:
+    inputs:
+      runs_on:
+        description: Runner label. The runner needs Python 3.9 or later.
+        type: string
+        default: ubuntu-latest
+      tag_prefix:
+        type: string
+        default: v
+      initial_version:
+        description: What a first release is bumped from when there are no version tags.
+        type: string
+        default: 0.0.0
+      update_major_tag:
+        description: Also move the floating major tag (v1) to each release, for repositories others pin with @v1.
+        type: boolean
+        default: false
+      require_standards:
+        type: boolean
+        default: true
+      require_migration_for_major:
+        type: boolean
+        default: true
+      min_section_chars:
+        type: number
+        default: 20
+      exempt_authors:
+        type: string
+        default: dependabot[bot],renovate[bot]
+      exempt_bump:
+        type: string
+        default: none
+      on_missing_pr:
+        description: What to do when the merged commit has no pull request. skip or fail.
+        type: string
+        default: skip
+      dry_run:
+        description: Report the release without creating it. Use it to try the workflow out.
+        type: boolean
+        default: false
+    secrets:
+      RELEASE_TOKEN:
+        description: >
+          Optional token (GitHub App or PAT) with contents write. Releases made with the default
+          token don't start other workflows, such as one that publishes on a tag. Set this if you
+          need that.
+        required: false
+    outputs:
+      released:
+        value: ${{ jobs.release.outputs.released }}
+      version:
+        value: ${{ jobs.release.outputs.version }}
+      tag:
+        value: ${{ jobs.release.outputs.tag }}
+
+permissions: {}
+
+jobs:
+  release:
+    name: release
+    if: github.event_name == 'push'
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 10
+    # One release at a time. A run that is waiting is replaced by a newer one, which is safe because
+    # every run releases all pull requests merged since the last release.
+    concurrency:
+      group: semantic-version-release-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      released: ${{ steps.semver.outputs.released }}
+      version: ${{ steps.semver.outputs.version }}
+      tag: ${{ steps.semver.outputs.tag }}
+    steps:
+      - id: semver
+        uses: Stemweave/shared-workflows/.github/actions/pr-semver@v1
+        with:
+          mode: release
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          commit_sha: ${{ github.sha }}
+          default_branch: ${{ github.event.repository.default_branch }}
+          tag_prefix: ${{ inputs.tag_prefix }}
+          initial_version: ${{ inputs.initial_version }}
+          update_major_tag: ${{ inputs.update_major_tag }}
+          require_standards: ${{ inputs.require_standards }}
+          require_migration_for_major: ${{ inputs.require_migration_for_major }}
+          min_section_chars: ${{ inputs.min_section_chars }}
+          exempt_authors: ${{ inputs.exempt_authors }}
+          exempt_bump: ${{ inputs.exempt_bump }}
+          on_missing_pr: ${{ inputs.on_missing_pr }}
+          dry_run: ${{ inputs.dry_run }}
