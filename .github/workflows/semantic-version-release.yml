@@ -80,7 +80,7 @@ jobs:
       tag: ${{ steps.semver.outputs.tag }}
     steps:
       - id: semver
-        uses: Stemweave/shared-workflows/.github/actions/pr-semver@v1
+        uses: Stemweave/shared-workflows/.github/actions/pr-semver@main
         with:
           mode: release
           token: ${{ secrets.RELEASE_TOKEN || github.token }}

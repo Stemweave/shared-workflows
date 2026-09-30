@@ -1,7 +1,7 @@
 name: versioning
 
-# This repository versions itself with its own workflows. Releases also move the v1 tag that
-# every caller pins.
+# This repository versions itself with its own workflows. Callers use main, so the releases are a
+# record and a way to pin or roll back, not something callers have to follow.
 on:
   pull_request:
     branches: [main]
@@ -25,5 +25,3 @@ jobs:
       contents: write
       pull-requests: read
     uses: ./.github/workflows/semantic-version-release.yml
-    with:
-      update_major_tag: true

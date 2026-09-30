@@ -46,7 +46,7 @@ jobs:
       bump: ${{ steps.semver.outputs.bump }}
     steps:
       - id: semver
-        uses: Stemweave/shared-workflows/.github/actions/pr-semver@v1
+        uses: Stemweave/shared-workflows/.github/actions/pr-semver@main
         with:
           mode: check
           pull_request_number: ${{ github.event.pull_request.number }}

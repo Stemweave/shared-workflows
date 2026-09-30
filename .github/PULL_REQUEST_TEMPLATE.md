@@ -13,9 +13,9 @@ Text in comments like this one is ignored.
 
 ## Version bump
 
-<!-- Tick exactly one. Every caller pins @v1, so this decides who gets the change and when. -->
+<!-- Tick exactly one. Every caller runs main, so a merged change reaches all of them at once. -->
 
-- [ ] **Major**: breaking change. Existing callers must change their workflow files
+- [ ] **Major**: breaking change. Existing callers break until they change their workflow files
 - [ ] **Minor**: new backwards-compatible feature or input
 - [ ] **Patch**: backwards-compatible fix
 - [ ] **None**: no release (docs or tests only)
@@ -36,5 +36,5 @@ Text in comments like this one is ignored.
 - [ ] No untrusted text (PR title, body, branch name) goes into a shell command
 - [ ] Third-party actions are pinned to a full commit SHA
 - [ ] Every input has a description and a safe default
-- [ ] Existing callers keep working, or the bump above is Major
+- [ ] Existing callers keep working, or a migration plan is agreed before this merges
 - [ ] Tests pass and the README is up to date
