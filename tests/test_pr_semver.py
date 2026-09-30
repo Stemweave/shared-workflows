@@ -102,6 +102,26 @@ class Description(unittest.TestCase):
         self.assertNotIn("why", sections)
 
 
+try:
+    import yaml
+except ImportError:  # CI installs it; a local run without it skips the check
+    yaml = None
+
+
+@unittest.skipIf(yaml is None, "PyYAML is not installed")
+class ActionFiles(unittest.TestCase):
+    def test_every_action_file_is_valid_yaml(self):
+        # actionlint only checks workflows, and a runner refuses an action.yml it can't parse.
+        actions = pathlib.Path(__file__).resolve().parent.parent / ".github" / "actions"
+        files = sorted(actions.glob("*/action.yml"))
+        self.assertTrue(files)
+        for path in files:
+            with self.subTest(action=path.parent.name):
+                data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                self.assertEqual(data["runs"]["using"], "composite")
+                self.assertTrue(data["inputs"])
+
+
 class Template(unittest.TestCase):
     def test_the_shipped_template_is_rejected_until_filled_in(self):
         path = pathlib.Path(__file__).resolve().parent.parent / ".github" / "PULL_REQUEST_TEMPLATE.md"

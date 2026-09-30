@@ -18,7 +18,7 @@ inputs:
     description: The stripe colour as a decimal number, for example 3447003 for blue.
     default: "5793266"
   fields:
-    description: Extra details, one per line as "Name: value".
+    description: 'Extra details, one per line as "Name: value".'
     default: ""
   footer:
     description: Small text at the bottom.
