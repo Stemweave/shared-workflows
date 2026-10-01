@@ -1,0 +1,182 @@
+name: Terraform on HCP Terraform
+
+# Runs terraform plan, apply, or destroy for a repository whose state is in HCP Terraform, using an
+# API-driven workspace. The caller decides the action: plan for a pull request, apply for a merge,
+# and whatever was picked for a manual run. See the README for the caller.
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: plan, apply, or destroy.
+        type: string
+        required: true
+      confirm:
+        description: To destroy, the repository name, typed to confirm.
+        type: string
+        default: ""
+      working_directory:
+        description: The folder holding the Terraform configuration.
+        type: string
+        default: .
+      terraform_version:
+        description: The Terraform CLI to install on the runner. The workspace sets the version remote runs use.
+        type: string
+        default: 1.x
+      runs_on:
+        description: Runner label.
+        type: string
+        default: ubuntu-latest
+    secrets:
+      TF_API_TOKEN:
+        description: An HCP Terraform team token. It runs plans, and applies too when TF_API_TOKEN_APPLY is not set.
+        required: true
+      TF_API_TOKEN_APPLY:
+        description: Optional second token with permission to apply. When set, only apply and destroy use it, so plans can run with a token that can't change anything.
+        required: false
+
+permissions: {}
+
+jobs:
+  terraform:
+    name: terraform
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 60
+    # A new push replaces a running plan. Applies never replace each other: they wait their turn.
+    # A waiting apply that is replaced by a newer one is fine, because every apply uses the latest code.
+    concurrency:
+      group: ${{ inputs.action == 'plan' && format('terraform-plan-{0}-{1}', github.repository, github.ref) || format('terraform-apply-{0}', github.repository) }}
+      cancel-in-progress: ${{ inputs.action == 'plan' }}
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - name: Check the request
+        env:
+          ACTION: ${{ inputs.action }}
+          CONFIRM: ${{ inputs.confirm }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          case "$ACTION" in
+            plan | apply | destroy) ;;
+            *)
+              echo "::error::The action must be plan, apply, or destroy, not '$ACTION'."
+              exit 1
+              ;;
+          esac
+          if [ "$ACTION" != "plan" ] && [ "$REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::$ACTION only runs from $DEFAULT_BRANCH, so unreviewed code is never applied. This run is on '$REF_NAME'."
+            exit 1
+          fi
+          if [ "$ACTION" = "destroy" ] && [ "$CONFIRM" != "$REPO_NAME" ]; then
+            echo "::error::To destroy, type the repository name ($REPO_NAME) in the confirm box."
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+          terraform_wrapper: false
+          cli_config_credentials_token: ${{ (inputs.action != 'plan' && secrets.TF_API_TOKEN_APPLY) || secrets.TF_API_TOKEN }}
+
+      - name: Init
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform init -no-color
+
+      - name: Check formatting
+        if: inputs.action == 'plan'
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform fmt -check -recursive -diff -no-color
+
+      - name: Validate
+        if: inputs.action == 'plan'
+        working-directory: ${{ inputs.working_directory }}
+        run: terraform validate -no-color
+
+      - name: Run terraform ${{ inputs.action }}
+        id: terraform
+        working-directory: ${{ inputs.working_directory }}
+        env:
+          ACTION: ${{ inputs.action }}
+          LOG: ${{ runner.temp }}/terraform.log
+        run: |
+          set -o pipefail
+          case "$ACTION" in
+            plan) terraform plan -no-color 2>&1 | tee "$LOG" ;;
+            apply) terraform apply -no-color -auto-approve 2>&1 | tee "$LOG" ;;
+            destroy) terraform destroy -no-color -auto-approve 2>&1 | tee "$LOG" ;;
+          esac
+
+      - name: Summarize
+        if: ${{ !cancelled() && steps.terraform.outcome != 'skipped' }}
+        env:
+          ACTION: ${{ inputs.action }}
+          OUTCOME: ${{ steps.terraform.outcome }}
+          LOG: ${{ runner.temp }}/terraform.log
+        run: |
+          {
+            echo "## Terraform $ACTION: $OUTCOME"
+            echo
+            if [ -f "$LOG" ]; then
+              echo '```'
+              head -c 60000 "$LOG"
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment the plan on the pull request
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && inputs.action == 'plan' && steps.terraform.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          OUTCOME: ${{ steps.terraform.outcome }}
+          DIRECTORY: ${{ inputs.working_directory }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LOG: ${{ runner.temp }}/terraform.log
+        run: |
+          marker="<!-- terraform-plan:${DIRECTORY} -->"
+
+          if [ "$OUTCOME" != "success" ]; then
+            headline="The plan failed."
+          elif grep -q "^No changes\." "$LOG" 2>/dev/null; then
+            headline="No changes. The configuration matches what exists."
+          else
+            headline=$(grep -E '^Plan: ' "$LOG" | tail -n 1 || true)
+            headline="${headline:-The plan succeeded.}"
+          fi
+
+          {
+            echo "$marker"
+            echo "### Terraform plan"
+            echo
+            echo "**$headline** [Run log]($RUN_URL)"
+            echo
+            echo "<details><summary>Show the plan</summary>"
+            echo
+            echo '```'
+            head -c 60000 "$LOG" 2>/dev/null || true
+            echo
+            echo '```'
+            echo "</details>"
+          } > "$RUNNER_TEMP/comment.md"
+
+          # Pull requests from forks get a read-only token, so a comment can fail. It never fails the job.
+          existing=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" 2>/dev/null | head -n 1 || true)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null \
+              || echo "::warning::Could not update the plan comment."
+          else
+            gh api "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@"$RUNNER_TEMP/comment.md" > /dev/null \
+              || echo "::warning::Could not post the plan comment."
+          fi
