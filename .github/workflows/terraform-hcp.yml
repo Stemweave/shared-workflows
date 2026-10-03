@@ -115,6 +115,38 @@ jobs:
             destroy) terraform destroy -no-color -auto-approve 2>&1 | tee "$LOG" ;;
           esac
 
+      - name: Explain a token problem
+        if: ${{ !cancelled() && steps.terraform.outcome == 'failure' }}
+        env:
+          ACTION: ${{ inputs.action }}
+          HAS_APPLY_TOKEN: ${{ secrets.TF_API_TOKEN_APPLY != '' }}
+          LOG: ${{ runner.temp }}/terraform.log
+        run: |
+          # HCP Terraform refuses a token that can read a workspace but not use it, and says so in two
+          # different ways. Turn both into something that names the fix.
+          title=""
+          if grep -q "Insufficient rights to generate a plan" "$LOG" 2>/dev/null; then
+            title="The token can't run plans"
+            msg="The token can read this workspace but isn't allowed to plan on it. Give its team at least Plan access to the workspace, or to the project that holds it. Read access is not enough."
+            if [ "$ACTION" != "plan" ] && [ "$HAS_APPLY_TOKEN" != "true" ]; then
+              msg="TF_API_TOKEN_APPLY is not set for this repository, so TF_API_TOKEN was used. $msg"
+            fi
+          elif grep -q "Error acquiring the state lock" "$LOG" 2>/dev/null && grep -q "resource not found" "$LOG" 2>/dev/null; then
+            title="The token can't lock the workspace"
+            if [ "$ACTION" != "plan" ] && [ "$HAS_APPLY_TOKEN" != "true" ]; then
+              msg="TF_API_TOKEN_APPLY is not set for this repository, so TF_API_TOKEN was used, and a plan-level token can't lock the workspace. Add TF_API_TOKEN_APPLY as an organization secret shared with this repository, or give TF_API_TOKEN write access."
+            elif [ "$ACTION" != "plan" ]; then
+              msg="The apply token can't lock this workspace. Give its team Write access to the workspace, or to the project that holds it. An organization token won't work here: use a team or user token."
+            else
+              msg="The plan token can't lock this workspace. Check that its team has access to the workspace, or to the project that holds it."
+            fi
+          fi
+          [ -n "$title" ] || exit 0
+
+          echo "::error title=$title::$msg"
+          echo "### $title" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summarize
         if: ${{ !cancelled() && steps.terraform.outcome != 'skipped' }}
         env:
